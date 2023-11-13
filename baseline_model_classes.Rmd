@@ -1,0 +1,229 @@
+---
+title: "RetCCL Features"
+output: html_notebook
+---
+
+
+
+```{r}
+library(rhdf5)
+library(data.table)
+
+path_to_extracted_features = '/omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/UKHD_Neuro/RetCLL_Features/299'
+
+slide_meta = fread("/omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology//metadata/slides_FS_anno.csv")
+ct_scoring = fread("/omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology//metadata/CT_3_Class_Draft.csv", header = T)
+TilesPerPat = fread("~/histopathology/metadata/TilesPerPat_299.csv")
+
+valid_filesnames <- readLines("~/histopathology/metadata/valid_set_1.txt")
+train_filesnames <- readLines("~/histopathology/metadata/train_set_1.txt")
+
+# valid_filesnames <- gsub(valid_filesnames, pat="\\.h5", rep="")
+ntilespp = 10
+
+```
+
+
+
+
+```{r}
+
+
+merged_meta <- merge(slide_meta, ct_scoring, by.x = 'txt_idat', by.y = 'idat', all = FALSE)
+
+merged_meta <- merged_meta[CT_class %in% c("Chromothripsis", "No Chromothripsis")]
+
+files = paste0(merged_meta$uuid, '.h5')
+prop.table(table(merged_meta$CT_class))
+
+```
+
+
+
+```{r}
+
+myx = file.exists(file.path(path_to_extracted_features, files))
+sum(myx)
+
+files <- files[myx]
+filestokeep = TilesPerPat[`Tiles Per Slide`>=ntilespp, File]
+files <- intersect(files,filestokeep)
+length(files)
+```
+
+
+
+```{r}
+# train_files = files[!files %in% valid_filesnames]
+
+meta_train <- merged_meta[uuid %in% gsub(train_filesnames, pat=".h5", rep="")]
+meta_valid <- merged_meta[uuid %in% gsub(valid_filesnames, pat=".h5", rep="")]
+
+meta_train$CT_class <- factor(meta_train$CT_class, levels=c("No Chromothripsis", "Chromothripsis"))
+
+```
+
+Lets look at a "family" model:
+
+```{r}
+
+glm.fam <- glm(CT_class ~ family, data=meta_train, family = "binomial")
+
+glm.fam.pred <- predict(glm.fam, meta_valid, type="response") > 0.5
+
+
+error = mean(glm.fam.pred != (meta_valid$CT_class=='Chromothripsis'))
+
+recall = sum(glm.fam.pred & meta_valid$CT_class=='Chromothripsis')/sum(meta_valid$CT_class=='Chromothripsis')
+
+precision = sum(glm.fam.pred& meta_valid$CT_class=='Chromothripsis')/sum(glm.fam.pred)
+
+table("Prediction" = ifelse(glm.fam.pred, "Chromothripsis", "No Chormothripsis") , "Truth" = meta_valid$CT_class)
+
+# 2*(precision*recall)/(precision+recall)
+
+print(paste0("Error: ", round(error,2)," Precision: ", round(precision,2)," Recall: ", round(recall,2)))
+
+```
+
+Lets compare to performance of the AttentionMIL DNN:
+
+
+
+```{r, warning=FALSE}
+
+dnn.preds <- unlist(read.csv("../metadata/valid_set_1_preds.csv", header=F))
+
+table("Prediction" = c("No Chromothripsis", "Chromothripsis")[dnn.preds+1],
+      Truth=merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class])
+
+
+
+error = mean(as.logical(dnn.preds) != (merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis'))
+
+recall = sum(as.logical(dnn.preds) & merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis')/sum(merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis')
+
+precision = sum(as.logical(dnn.preds)& merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis')/sum(as.logical(dnn.preds))
+
+print(paste0("Error: ", round(error,2)," Precision: ", round(precision,2)," Recall: ", round(recall,2)))
+
+
+```
+
+Lets compare to performance of the MaxMIL DNN:
+
+
+
+```{r, warning=FALSE}
+
+dnn.preds <- unlist(read.csv("../metadata/valid_set_1_preds.csv", header=F))
+
+table("Prediction" = c("No Chromothripsis", "Chromothripsis")[dnn.preds+1],
+      Truth=merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class])
+
+
+
+error = mean(as.logical(dnn.preds) != (merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis'))
+
+recall = sum(as.logical(dnn.preds) & merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis')/sum(merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis')
+
+precision = sum(as.logical(dnn.preds)& merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), CT_class]=='Chromothripsis')/sum(as.logical(dnn.preds))
+
+print(paste0("Error: ", round(error,2)," Precision: ", round(precision,2)," Recall: ", round(recall,2)))
+
+
+```
+
+Lets compare the predictions:
+
+
+```{r}
+
+pred.glm.2 <- as.numeric(predict(glm.fam, merged_meta[ match(gsub(valid_filesnames, pat=".h5", rep=""), uuid), ], "response") > 0.5)
+
+table("DNN" = dnn.preds,"Baseline" = pred.glm.2)
+
+```
+
+Lets try combining the DNN and Family information:
+
+
+```{r}
+
+dnn.train_logits <- unlist(read.csv("../metadata/train_set_1_probs.csv", header=F))
+
+hist(dnn.train_logits)
+
+
+```
+
+```{r}
+meta_train <- merged_meta[match(gsub(train_filesnames, pat=".h5", rep=""), uuid)]
+
+
+meta_train$dnn.logit = dnn.train_logits
+
+meta_train$CT_class <- factor(meta_train$CT_class, levels=c("No Chromothripsis", "Chromothripsis"))
+
+glm.comb <- glm(CT_class ~ family + dnn.logit, data=meta_train, family = "binomial")
+```
+
+
+
+```{r}
+
+meta_valid <- merged_meta[match(gsub(valid_filesnames, pat=".h5", rep=""), uuid)]
+
+dnn.valid_logits <- unlist(read.csv("../metadata/valid_set_1_probs.csv", header=F))
+
+hist(dnn.valid_logits)
+
+meta_valid$dnn.logit = dnn.valid_logits
+
+```
+
+
+```{r}
+glm.comb.pred <- predict(glm.comb, meta_valid, type="response") > 0.5
+
+
+error = mean(glm.comb.pred != (meta_valid$CT_class=='Chromothripsis'))
+
+recall = sum(glm.comb.pred & meta_valid$CT_class=='Chromothripsis')/sum(meta_valid$CT_class=='Chromothripsis')
+
+precision = sum(glm.comb.pred& meta_valid$CT_class=='Chromothripsis')/sum(glm.comb.pred)
+
+table("Prediction" = ifelse(glm.comb.pred, "Chromothripsis", "No Chormothripsis") , "Truth" = meta_valid$CT_class)
+
+# 2*(precision*recall)/(precision+recall)
+
+print(paste0("Error: ", round(error,2)," Precision: ", round(precision,2)," Recall: ", round(recall,2)))
+
+
+```
+
+
+Lets try a baseline using all the classes
+
+```{r}
+meta_valid.2 <- meta_valid[txt_TUMOR_450K_lang != "methylation class glioblastoma, IDH wildtype, H3.3 G34 mutant"]
+
+glm.class <- glm(CT_class ~ txt_TUMOR_450K_lang, data=meta_train, family = "binomial")
+
+glm.class.pred <- predict(glm.class, meta_valid.2, type="response") > 0.5
+
+
+error = mean(glm.class.pred != (meta_valid.2$CT_class=='Chromothripsis'))
+
+recall = sum(glm.class.pred & meta_valid.2$CT_class=='Chromothripsis')/sum(meta_valid.2$CT_class=='Chromothripsis')
+
+precision = sum(glm.class.pred& meta_valid.2$CT_class=='Chromothripsis')/sum(glm.class.pred)
+
+table("Prediction" = ifelse(glm.class.pred, "Chromothripsis", "No Chormothripsis") , "Truth" = meta_valid.2$CT_class)
+
+# 2*(precision*recall)/(precision+recall)
+
+print(paste0("Error: ", round(error,2)," Precision: ", round(precision,2)," Recall: ", round(recall,2)))
+
+```
+
