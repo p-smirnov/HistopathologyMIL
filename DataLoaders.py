@@ -62,8 +62,11 @@ class RetCCLFeatureLoaderMem(Dataset):
         features = self.slide_list[idx]
         label = self.labels[idx]
         # features = features.reshape([1,-1,2048])
-        sampled_pchs = np.random.choice(range(features.shape[0]),size=self.num_patches, replace=False)
-        features = features[sampled_pchs,:]
+        if self.num_patches == 'all':
+            features = features[:]
+        else:
+            sampled_pchs = np.random.choice(range(features.shape[0]),size=self.num_patches, replace=False)
+            features = features[sampled_pchs,:]
         #if not torch.cuda.is_available():
         features = features.astype(np.float32)
         return features, label

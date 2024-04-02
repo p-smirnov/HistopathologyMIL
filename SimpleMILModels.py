@@ -173,6 +173,12 @@ class Attention(L.LightningModule):
         Y_hat = torch.ge(torch.sigmoid(Y_prob), 0.5).float()
 
         return Y_prob, Y_hat, A
+    
+    def attention_forward(self, x):
+        A = self.attention(x)  # NxK
+        A = torch.transpose(A, 2, 1)  # KxN
+        A = F.softmax(A, dim=2)  # softmax over N
+        return A
 
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
@@ -218,7 +224,28 @@ class Attention(L.LightningModule):
             self.log('valid_prec', precision, prog_bar=True)
         if recall.isfinite().item():
             self.log('valid_recall', recall, prog_bar=True)
+        if recall.isfinite().item() and precision.isfinite().item():
+            f1score = 2 * precision * recall / (precision + recall + 1e-8)
+            self.log('valid_f1', f1score, prog_bar=True)
 
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y = y.float()
+        y_prob, y_hat, _ = self.forward(x)
+        # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
+        loss = self.loss(y_prob,y)
+        # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
+        error = 1. - y_hat.eq(y).float().mean()
+        precision = torch.sum(y_hat * y) / (torch.sum(y_hat)+1e-8)
+        recall = torch.sum(y_hat * y) / (torch.sum(y)+1e-8)
+        # loss = loss.mean()
+        self.log("test_loss", loss, prog_bar=True)
+        self.log('test_error', error, prog_bar=True)
+        if precision.isfinite().item(): 
+            self.log('test_prec', precision, prog_bar=True)
+        if recall.isfinite().item():
+            self.log('test_recall', recall, prog_bar=True)
     
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=self.lr, betas=(0.9, 0.999), weight_decay=self.weight_decay)

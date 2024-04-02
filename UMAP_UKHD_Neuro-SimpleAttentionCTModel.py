@@ -42,15 +42,23 @@ parser.add_argument("--weight_decay", type=float, default=10e-4)
 parser.add_argument("--max_epochs", type=int, default=200)
 parser.add_argument("--patch_size", type=int, default=299)
 parser.add_argument("--patches_per_pat", type=int, default=10)
+parser.add_argument("--training_strategy", type=str, default='random_tiles')
 
 # Parse the user inputs and defaults (returns a argparse.Namespace)
 args = parser.parse_args()
+
+if args.training_strategy=="all_tiles":
+    args.patches_per_pat = int(10)
 
 
 ## Set up Neptune logger
 
 
-wandb_logger = WandbLogger(project="UKHD_RetCLL_299_CT", log_model=True, offline=False, settings=wandb.Settings(start_method="fork"))
+wandb_logger = WandbLogger(project="UKHD_RetCLL_299_CT", 
+                           log_model=True, 
+                           offline=False, 
+                           settings=wandb.Settings(start_method="fork"),
+                           tags=['Dataset2'])
 
 wandb_logger.log_hyperparams(args)
 
@@ -84,13 +92,55 @@ slide_annots = slide_meta.join(ct_scoring, lsuffix="l")
 slide_annots['file'] = slide_annots.uuid + ".h5"
 
 # load train and valid sets
-slide_annots.CT_class
+
+train_set = pd.read_csv("../metadata/train_set_13112023_01.txt")
+valid_set = pd.read_csv("../metadata/valid_set_13112023_01.txt")
+
+
+train_files = train_set.loc[train_set["patches"]>=args.patches_per_pat].File.tolist()
+valid_files = valid_set.loc[valid_set["patches"]>=args.patches_per_pat].File.tolist()
+
+train_annot = slide_annots.loc[[x in train_files for x in slide_annots.file]]
+valid_annot = slide_annots.loc[[x in valid_files for x in slide_annots.file]]
+
+train_labels = np.abs(1-train_annot.CT_class.factorize(sort=True)[0])
+valid_labels = np.abs(1-valid_annot.CT_class.factorize(sort=True)[0])
+
+train_file_list = [h5py.File(path_to_extracted_features + "/" + x, 'r')['feats'][:] for x in train_annot.file]
+valid_file_list = [h5py.File(path_to_extracted_features + "/" + x, 'r')['feats'][:] for x in valid_annot.file]
+
+if args.training_strategy=="random_tiles":
+    train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter=args.patches_per_pat)
+    valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter=args.patches_per_pat)
+elif args.training_strategy=="all_tiles":
+    train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
+    valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
 
 
 
-# Load the data
+counts = np.bincount(train_labels)
 
-files = [x + ".h5" for x in slide_names]
+pos_weight = counts[0]/counts[1]
+
+# labels_weights = 1. / counts
+# weights = labels_weights[train_labels]
+# Sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
+# valid_labels = valid_data.dataset.labels[valid_data.indices]
+
+valid_counts = np.bincount(valid_labels)
+
+print(valid_counts)
+
+
+if args.training_strategy=="random_tiles":
+    train_dataloader = DataLoader(train_data, batch_size=64, num_workers=9)#, sampler=Sampler)
+    valid_dataloader = DataLoader(valid_data, batch_size=128, num_workers=4)#, sampler=valid_Sampler)
+elif args.training_strategy=="all_tiles":
+    train_dataloader = DataLoader(train_data, batch_size=1, num_workers=9, shuffle=True)
+    valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=True)
+
+
+
 
 # with h5py.File(filename, "r") as f:
 #     # Print all root level object names (aka keys) 
@@ -112,70 +162,70 @@ files = [x + ".h5" for x in slide_names]
 #     # preferred methods to get dataset values:
 #     ds_obj = f[a_group_key]      # returns as a h5py dataset object
 #     ds_arr = f[a_group_key][()]  # returns as a numpy array
-len(files)
+# len(files)
 
 
-myx = [os.path.exists(path_to_extracted_features + "/" + x) for x in files]
-files = np.array(files)[myx]
-len(files)
+# myx = [os.path.exists(path_to_extracted_features + "/" + x) for x in files]
+# files = np.array(files)[myx]
+# len(files)
 
 
-TilesPerPat = pd.read_csv("../metadata/TilesPerPat_" + str(args.patch_size) + ".csv")
-filestokeep = TilesPerPat.loc[TilesPerPat["Tiles Per Slide"]>=args.patches_per_pat].File.tolist()
+# TilesPerPat = pd.read_csv("../metadata/TilesPerPat_" + str(args.patch_size) + ".csv")
+# filestokeep = TilesPerPat.loc[TilesPerPat["Tiles Per Slide"]>=args.patches_per_pat].File.tolist()
 
-myx2 = [x in filestokeep for x in files]
+# myx2 = [x in filestokeep for x in files]
 
-files = files[myx2]
-len(files)
-
-
-labels = slide_annots.CT_class.factorize()[0][myx][myx2]
-labels = abs(labels-1)
-
-file_list = [h5py.File(path_to_extracted_features + "/" + x, 'r')['feats'][:] for x in files]
-
-# RetCCLDataset = RetCCLFeatureLoader(files, path_to_extracted_features,labels)
-RetCCLDataset = RetCCLFeatureLoaderMem(file_list,labels, patches_per_iter=args.patches_per_pat)
+# files = files[myx2]
+# len(files)
 
 
-x, y = RetCCLDataset.__getitem__(0)
+# labels = slide_annots.CT_class.factorize()[0][myx][myx2]
+# labels = abs(labels-1)
+
+# file_list = [h5py.File(path_to_extracted_features + "/" + x, 'r')['feats'][:] for x in files]
+
+# # RetCCLDataset = RetCCLFeatureLoader(files, path_to_extracted_features,labels)
+# RetCCLDataset = RetCCLFeatureLoaderMem(file_list,labels, patches_per_iter=args.patches_per_pat)
 
 
-g_cpu = torch.Generator()
-g_cpu.manual_seed(42)
+# x, y = RetCCLDataset.__getitem__(0)
 
 
-train_data, valid_data, test_data =  torch.utils.data.random_split(RetCCLDataset, [0.6, 0.2, 0.2], generator=g_cpu)
+# g_cpu = torch.Generator()
+# g_cpu.manual_seed(42)
+
+
+# train_data, valid_data, test_data =  torch.utils.data.random_split(RetCCLDataset, [0.6, 0.2, 0.2], generator=g_cpu)
 
 
 
-train_labels = train_data.dataset.labels[train_data.indices]
+# train_labels = train_data.dataset.labels[train_data.indices]
 
-counts = np.bincount(train_labels)
+# counts = np.bincount(train_labels)
 
-pos_weight = counts[0]/counts[1]
+# pos_weight = counts[0]/counts[1]
 
-# labels_weights = 1. / counts
-# weights = labels_weights[train_labels]
-# Sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
-valid_labels = valid_data.dataset.labels[valid_data.indices]
-
-valid_counts = np.bincount(valid_labels)
-
-print(valid_counts)
-
-
+# # labels_weights = 1. / counts
+# # weights = labels_weights[train_labels]
+# # Sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
 # valid_labels = valid_data.dataset.labels[valid_data.indices]
 
-# counts = np.bincount(valid_labels)
-# labels_weights = 1. / counts
-# weights = labels_weights[valid_labels]
-# valid_Sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
+# valid_counts = np.bincount(valid_labels)
+
+# print(valid_counts)
 
 
-## Keeping batch size low to 
-train_dataloader = DataLoader(train_data, batch_size=64, num_workers=9)#, sampler=Sampler)
-valid_dataloader = DataLoader(valid_data, batch_size=128, num_workers=4)#, sampler=valid_Sampler)
+# # valid_labels = valid_data.dataset.labels[valid_data.indices]
+
+# # counts = np.bincount(valid_labels)
+# # labels_weights = 1. / counts
+# # weights = labels_weights[valid_labels]
+# # valid_Sampler = torch.utils.data.WeightedRandomSampler(weights, len(weights))
+
+
+# ## Keeping batch size low to 
+# train_dataloader = DataLoader(train_data, batch_size=64, num_workers=9)#, sampler=Sampler)
+# valid_dataloader = DataLoader(valid_data, batch_size=128, num_workers=4)#, sampler=valid_Sampler)
 
 
 if args.model=="Attention":
