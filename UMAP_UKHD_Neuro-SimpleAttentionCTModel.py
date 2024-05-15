@@ -44,6 +44,7 @@ parser.add_argument("--patch_size", type=int, default=299)
 parser.add_argument("--patches_per_pat", type=int, default=10)
 parser.add_argument("--training_strategy", type=str, default='random_tiles')
 
+
 # Parse the user inputs and defaults (returns a argparse.Namespace)
 args = parser.parse_args()
 

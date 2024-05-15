@@ -6,6 +6,7 @@ import pandas as pd
 import os
 import h5py
 import wandb
+import zarr
 
 import string
 import random
@@ -45,6 +46,11 @@ parser.add_argument("--patches_per_pat", type=int, default=10)
 parser.add_argument("--training_strategy", type=str, default='random_tiles')
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--cv_split_path", type=str, default='/home/p163v/histopathology/splits/02022024/')
+parser.add_argument("--metadata_column", type=str, default=None)
+parser.add_argument("--embedding", type=str, default='retccl')
+
+
+
 
 # Parse the user inputs and defaults (returns a argparse.Namespace)
 args = parser.parse_args()
@@ -69,8 +75,52 @@ random_group_tag = ''.join(random.choice(string.ascii_uppercase + string.digits)
 
 # from AttentionMIL_model import Attention
 
-path_to_extracted_features = '/dkfz/cluster/gpu/data/OE0540/p163v/UKHD_Neuro/RetCLL_Features/' + str(args.patch_size) + '/'
+# path_to_extracted_features = '/dkfz/cluster/gpu/data/OE0540/p163v/UKHD_Neuro/RetCLL_Features/' + str(args.patch_size) + '/'
 
+def h5py_loader(path, i, extra_features=None):
+    if extra_features is None:
+        return h5py.File(path, 'r')['feats'][:]
+    else:
+        return np.concatenate((h5py.File(path, 'r')['feats'][:], np.tile(extra_features[i],reps=np.array([h5py.File(path, 'r')['feats'].shape[0],1]))), axis=1)
+
+def pt_loader(path, i, extra_features=None):
+    x = torch.load(path)
+    x = x.numpy()
+    if extra_features is None:
+        return x
+    else:
+        return np.concatenate((x, np.tile(extra_features[i],reps=[x.shape[0],1])), axis=1)
+
+
+def zarr_loader(path, i, extra_features=None):
+    root = zarr.open(path, "r")
+    x = root['features'][:]
+    if extra_features is None:
+        return x
+    else:
+        return np.concatenate((x, np.tile(extra_features[i],reps=[x.shape[0],1])), axis=1)
+
+
+def load_features(embedding, extra_features=None):
+    if embedding == 'retccl':
+        filetype = '.h5'
+        path_to_extracted_features = '/dkfz/cluster/gpu/data/OE0540/p163v/UKHD_Neuro/RetCLL_Features/' + str(args.patch_size) + ''
+        all_features = {file: h5py_loader(path_to_extracted_features + "/" + file + filetype, i, extra_features) for i, file in enumerate(slide_annots.file) if os.path.isfile(path_to_extracted_features + "/" + file + filetype)}
+    elif embedding == 'ctranspath_tuned':
+        filetype = '.pt'
+        path_to_extracted_features = '/omics/odcf/analysis/OE0606_projects/pancancer_histopathology/analysis/shared_playground/CNS_classification/embeddings/moco_pretrained_features_all_tilesize_' + str(args.patch_size) + '_embeddings_768/pt_files'
+        all_features = {file: pt_loader(path_to_extracted_features + "/" + file + filetype, i, extra_features) for i, file in enumerate(slide_annots.file) if os.path.isfile(path_to_extracted_features + "/" + file + filetype)}
+    elif embedding == 'UNI':
+        filetype = '.zarr'
+        path_to_extracted_features = '/omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/UKHD_Neuro/UNI_embeddings/'
+        all_features = {file: zarr_loader(path_to_extracted_features + "/" + file + "_uni_embedding"+ filetype, i, extra_features) for i, file in enumerate(slide_annots.file) if os.path.exists(path_to_extracted_features + "/" + file + "_uni_embedding"+ filetype)}
+    elif embedding == 'UNI_256':
+        filetype = '.pt'
+        path_to_extracted_features = '/omics/odcf/analysis/OE0606_projects/pancancer_histopathology/analysis/shared_playground/CNS_classification/embeddings/UNI_' + str(args.patch_size) + '_1024_UKHD_FULL_dataset/pt_files'
+        all_features = {file: pt_loader(path_to_extracted_features + "/" + file + filetype, i, extra_features) for i, file in enumerate(slide_annots.file) if os.path.isfile(path_to_extracted_features + "/" + file + filetype)}
+    else:
+        raise ValueError("Unknown embedding type")
+    return all_features
 
 
 import os
@@ -113,7 +163,7 @@ slide_meta = slide_meta.drop("idat", axis=1)
 slide_annots = slide_meta.join(ct_scoring, lsuffix="l")
 
 
-slide_annots['file'] = slide_annots.uuid + ".h5"
+slide_annots['file'] = slide_annots.uuid #+ ".h5"
 
 slide_annots.index = slide_annots.uuid
 
@@ -121,10 +171,20 @@ slide_annots.index = slide_annots.uuid
 splits = os.listdir(args.cv_split_path)
 splits.sort()
 
+all_slides = sum([pd.read_csv(args.cv_split_path + "0/" + file).slide.tolist() for file in os.listdir(args.cv_split_path + "0/")],[])
+slide_annots = slide_annots.loc[all_slides]
 
-all_files = [x for x in slide_annots.file if os.path.isfile(path_to_extracted_features + "/" + x)]
+if args.metadata_column is not None:
+    print("Using metadata column: ", args.metadata_column)
+    extra_features = F.one_hot(torch.LongTensor(slide_annots.loc[:,args.metadata_column].factorize()[0]))
+    extra_features = extra_features.numpy().astype(np.float16)
+    all_features = load_features(args.embedding, extra_features)
+    # all_features = {file: np.concatenate((h5py.File(path_to_extracted_features + "/" + file, 'r')['feats'][:], 
+    #     np.tile(extra_features[i],reps=np.array([h5py.File(path_to_extracted_features + "/" + file, 'r')['feats'].shape[0],1]))), axis=1) for i, file in enumerate(slide_annots.file) if os.path.isfile(path_to_extracted_features + "/" + file)}
+else:
+    all_features = load_features(args.embedding)
 
-all_features = {file: h5py.File(path_to_extracted_features + "/" + file, 'r')['feats'][:] for file in all_files}
+print(len(all_features))
 
 for splt in splits:
 
@@ -155,9 +215,9 @@ for splt in splits:
     valid_slide = valid_set.loc[valid_set["patches"]>=args.patches_per_pat].slide.tolist()
     test_slide = test_set.loc[test_set["patches"]>=args.patches_per_pat].slide.tolist()
 
-    train_files = [x + '.h5' for x in train_slide]
-    valid_files = [x + '.h5' for x in valid_slide]
-    test_files = [x + '.h5' for x in test_slide]
+    train_files = [x for x in train_slide] # here in case file path needs to be added later
+    valid_files = [x for x in valid_slide]
+    test_files = [x for x in test_slide]
 
     train_file_list = [all_features[x] for x in train_files]
     valid_file_list = [all_features[x] for x in valid_files]
@@ -201,11 +261,11 @@ for splt in splits:
 
 
     if args.model=="Attention":
-        model = Attention(2048, lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, class_weights=torch.Tensor([pos_weight]))
+        model = Attention(test_file_list[0].shape[1], lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, class_weights=torch.Tensor([pos_weight]))
     elif args.model=="Max":
-        model = MaxMIL(2048, lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, class_weights=torch.Tensor([pos_weight]))
+        model = MaxMIL(test_file_list[0].shape[1], lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, class_weights=torch.Tensor([pos_weight]))
     elif args.model=="AttentionResNet":
-        model = AttentionResNet(2048, lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, class_weights=torch.Tensor([pos_weight]))
+        model = AttentionResNet(test_file_list[0].shape[1], lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, class_weights=torch.Tensor([pos_weight]))
 
     checkpoint_error = ModelCheckpoint(save_top_k=1, 
                                           monitor="valid_error",
