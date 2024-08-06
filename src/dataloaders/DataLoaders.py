@@ -15,7 +15,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 from torch import optim, utils, Tensor
-from SimpleMILModels import Attention
 import glob 
 from PIL import Image
 # from turbojpeg import TurboJPEG

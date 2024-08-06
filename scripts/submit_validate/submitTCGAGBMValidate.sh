@@ -6,4 +6,4 @@ source /home/p163v/.bashrc
 
 mamba activate marugoto
 
-python /omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/Notebooks/Validate_UNI_TCGA_GBM.py
+python /omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/src/inference/Validate_UNI_TCGA_GBM.py

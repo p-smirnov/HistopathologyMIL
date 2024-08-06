@@ -32,8 +32,8 @@ import sklearn.linear_model
 
 
 from itables import show
-from SimpleMILModels import Attention, MaxMIL, AttentionResNet
-from DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
+from src.model.SimpleMILModels import Attention, MaxMIL, AttentionResNet
+from src.dataloaders.DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
 
 
 import zarr

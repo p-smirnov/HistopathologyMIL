@@ -17,8 +17,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 from torch import optim, utils, Tensor
-from SimpleMILModels import MaxMIL
-from DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
+from src.model.SimpleMILModels import MaxMIL
+from src.dataloaders.DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
 
 
 

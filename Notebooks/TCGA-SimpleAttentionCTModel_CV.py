@@ -21,8 +21,8 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 
 from torch import optim, utils, Tensor
-from SimpleMILModels import Attention, MaxMIL, AttentionResNet
-from DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
+from src.model.SimpleMILModels import Attention, MaxMIL, AttentionResNet
+from src.dataloaders.DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
 
 
 from argparse import ArgumentParser

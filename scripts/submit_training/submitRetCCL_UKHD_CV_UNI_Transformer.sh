@@ -6,4 +6,4 @@ source /home/p163v/.bashrc
 
 mamba activate marugoto
 
-python /omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/Notebooks/UMAP_UKHD_Neuro-SimpleAttentionCTModel_CV.py --model TransformerMIL --hidden_dim  512 512 --n_heads 8 --patch_size 256 --patches_per_pat 250 --embedding UNI_256 --cv_split_path /omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/splits/15052024_UNI/ --lr 0.00002 --weight_decay 0.00002
+python /omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/src/train/train.py --model TransformerMIL --hidden_dim  512 512 --n_heads 8 --patch_size 256 --patches_per_pat 250 --embedding UNI_256 --cv_split_path /omics/odcf/analysis/OE0585_projects/chromothripsis/histopathology/splits/15052024_UNI/ --lr 0.00002 --weight_decay 0.00002

@@ -24,8 +24,8 @@ from lightning.pytorch.loggers import WandbLogger
 
 
 from torch import optim, utils, Tensor
-from SimpleMILModels import AttentionCNVSig
-from DataLoaders import TCGAPatchLoaderImages
+from src.model.SimpleMILModels import AttentionCNVSig
+from src.dataloaders.DataLoaders import TCGAPatchLoaderImages
 
 
 

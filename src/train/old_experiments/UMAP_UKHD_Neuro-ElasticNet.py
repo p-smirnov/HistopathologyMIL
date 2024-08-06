@@ -20,7 +20,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 from torch import optim, utils, Tensor
 from ElasticNetModel import ElasticLogistic
-from DataLoaders import RetCCLFeatureLoaderMemNoMIL
+from src.dataloaders.DataLoaders import RetCCLFeatureLoaderMemNoMIL
 
 
 # neptune_token = os.environ["NEPTUNE_API_TOKEN"]

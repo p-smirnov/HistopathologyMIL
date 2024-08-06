@@ -22,8 +22,8 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 
 from torch import optim, utils, Tensor
-from SimpleMILModels import Attention, MaxMIL
-from DataLoaders import HIPT256FeatureLoader
+from src.model.SimpleMILModels import Attention, MaxMIL
+from src.dataloaders.DataLoaders import HIPT256FeatureLoader
 
 
 import tqdm

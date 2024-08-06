@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 from torch import optim, utils, Tensor
-from transformer.model.transformer import Transformer
+from src.transformer_from_scratch.model.transformer import Transformer
 
 class MaxMIL(L.LightningModule):
     def __init__(self, input_size, hidden_dim,  lr=0.0001, weight_decay=50e-4, class_weights=Tensor([1.0])):

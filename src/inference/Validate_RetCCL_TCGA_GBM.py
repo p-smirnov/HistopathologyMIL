@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[1]:
 
 
 import numpy as np
@@ -32,8 +31,8 @@ import sklearn.linear_model
 
 
 from itables import show
-from SimpleMILModels import Attention, MaxMIL, AttentionResNet
-from DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
+from src.model.SimpleMILModels import Attention, MaxMIL, AttentionResNet
+from src.dataloaders.DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
 
 
 import zarr
@@ -42,14 +41,12 @@ import seaborn as sns
 recompute_attn = False
 
 
-# In[2]:
 
 
 def sigmoid_array(x):
     return 1 / (1 + np.exp(-x))
 
 
-# In[3]:
 
 
 import os
@@ -57,25 +54,21 @@ os.environ['HTTP_PROXY']="http://www-int.dkfz-heidelberg.de:80"
 os.environ['HTTPS_PROXY']="http://www-int.dkfz-heidelberg.de:80"
 
 
-# In[4]:
 
 
 group = "Q24L5M"
 
 
-# In[5]:
 
 
 api = wandb.Api()
 
 
-# In[6]:
 
 
 runs = api.runs(path="psmirnov/UKHD_RetCLL_299_CT", filters={"group": group})
 
 
-# In[7]:
 
 
 runs
@@ -83,31 +76,26 @@ runs
 
 # Load in the features (not too much memory needed)
 
-# In[8]:
 
 
 path_to_extracted_features = '/home/p163v/histopathology/TCGA/ffpe/299/'
 
 
-# In[9]:
 
 
 slide_meta = pd.read_csv("../metadata/tcga_labeled_data.csv")
 
 
-# In[10]:
 
 
 (slide_meta.project == "LGG").sum()
 
 
-# In[11]:
 
 
 slide_meta[(slide_meta.project=="LGG") | (slide_meta.project=="GBM")]
 
 
-# In[14]:
 
 
 slide_meta = pd.read_csv("../metadata/tcga_labeled_data.csv")
@@ -124,19 +112,16 @@ test_labels = slide_meta[(slide_meta.project=="LGG") | (slide_meta.project=="GBM
 #    all_features = {file: h5py.File(path_to_extracted_features + "/" + file, 'r')['feats'][:] for file in all_files}
 
 
-# In[15]:
 
 
 test_labels.mean()
 
 
-# In[16]:
 
 
 test_labels.__len__()
 
 
-# In[17]:
 
 
 test_features = [h5py.File(path_to_extracted_features + "/" + file + ".h5", 'r')['feats'][:] for file in gbm_slides]
@@ -147,7 +132,6 @@ test_features = [h5py.File(path_to_extracted_features + "/" + file + ".h5", 'r')
 # We use the loss as the early stopping criteria
 # 
 
-# In[18]:
 
 
 model_list = list()
@@ -157,7 +141,6 @@ pred_list = list()
 cv =  lambda x: np.std(x) / np.mean(x)
 
 
-# In[19]:
 
 
 test_data = RetCCLFeatureLoaderMem(test_features, np.array(test_labels), patches_per_iter='all')
@@ -165,7 +148,6 @@ test_data = RetCCLFeatureLoaderMem(test_features, np.array(test_labels), patches
 RetCCLTest = DataLoader(test_data, batch_size=1, num_workers=1)#, sampler=valid_Sampler)
 
 
-# In[20]:
 
 
 for ii in range(len(runs)):
@@ -191,20 +173,17 @@ for ii in range(len(runs)):
     
 
 
-# In[ ]:
 
 
 prob_list = [np.concatenate(x) for x in prob_list]
 pred_list = [np.concatenate(x) for x in pred_list]
 
 
-# In[93]:
 
 
 prob_test = np.mean(np.vstack(prob_list), axis=0)
 
 
-# In[94]:
 
 
 prob_test = np.mean(np.vstack([sigmoid_array(x) for x in prob_list]), axis=0)
@@ -213,7 +192,6 @@ prob_test = np.mean(np.vstack([sigmoid_array(x) for x in prob_list]), axis=0)
 
 
 
-# In[101]:
 
 
 fig, ax = plt.subplots()
@@ -234,7 +212,6 @@ plt.savefig("/home/p163v/histopathology/Notebooks/GBM_Validation_ROC.png")
 plt.show()
 
 
-# In[ ]:
 
 
 fig, ax = plt.subplots()
