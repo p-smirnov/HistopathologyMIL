@@ -22,7 +22,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 
 
 from torch import optim, utils, Tensor
-from SimpleMILModels import Attention, MaxMIL, AttentionResNet
+from SimpleMILModels import Attention, MaxMIL, AttentionResNet, TransformerMIL
 from DataLoaders import RetCCLFeatureLoader, RetCCLFeatureLoaderMem
 
 
@@ -48,6 +48,14 @@ parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--cv_split_path", type=str, default='/home/p163v/histopathology/splits/02022024/')
 parser.add_argument("--metadata_column", type=str, default=None)
 parser.add_argument("--embedding", type=str, default='retccl')
+parser.add_argument("--tissue_filter", type=str, default=None, nargs="+")
+parser.add_argument("--label_path", type=str, default="../metadata/CT_3_Class_Draft.csv")
+parser.add_argument("--slide_annot_path", type=str, default="../metadata/labels_with_new_batch.csv")
+parser.add_argument("--n_heads", type=int, default=None)
+
+# parser.add_argument("--oncotree_filter", type=str, default=None, nargs="+")
+# parser.add_argument("--classifier_confidence", type=int, default=80)
+
 
 
 
@@ -145,8 +153,8 @@ def compute_confusion_matrix(true, pred):
 
 
 
-slide_meta = pd.read_csv("../metadata/labels_with_new_batch.csv")
-ct_scoring = pd.read_csv("../metadata/CT_3_Class_Draft.csv")
+slide_meta = pd.read_csv(args.slide_annot_path)
+ct_scoring = pd.read_csv(args.label_path)
 
 slide_meta_wbt = wandb.Table(dataframe=slide_meta)
 ct_scoring_wbt = wandb.Table(dataframe=ct_scoring)
@@ -167,11 +175,21 @@ slide_annots['file'] = slide_annots.uuid #+ ".h5"
 
 slide_annots.index = slide_annots.uuid
 
+# oncotree_map = pd.read_csv("../metadata/MappingClassifierToOncotree.csv")
+
+# slide_annots = slide_annots.merge(oncotree_map, left_on="max_super_family_class", right_on="Super Family", how="left")
+
+# if args.oncotree_filter is not None:
+#     slide_annots = slide_annots.loc[slide_annots['Oncotree code'].isin(args.oncotree_filter)]
+#     slide_annots = slide_annots.loc[slide_annots.max_cal_v11 * 100 >= args.classifier_confidence]
+
+
 
 splits = os.listdir(args.cv_split_path)
 splits.sort()
 
-all_slides = sum([pd.read_csv(args.cv_split_path + "0/" + file).slide.tolist() for file in os.listdir(args.cv_split_path + "0/")],[])
+all_slides = [sum([pd.read_csv(args.cv_split_path + split +"/" + file).slide.tolist() for file in os.listdir(args.cv_split_path + split + "/")],[]) for split in splits]
+all_slides = np.unique(sum(all_slides, []))
 slide_annots = slide_annots.loc[all_slides]
 
 if args.metadata_column is not None:
@@ -253,8 +271,8 @@ for splt in splits:
     valid_counts = np.bincount(valid_labels)
 
     if args.training_strategy=="random_tiles":
-        train_dataloader = DataLoader(train_data, batch_size=64, num_workers=9)#, sampler=Sampler)
-        valid_dataloader = DataLoader(valid_data, batch_size=128, num_workers=4)#, sampler=valid_Sampler)
+        train_dataloader = DataLoader(train_data, batch_size=args.batch_size, num_workers=9)#, sampler=Sampler)
+        valid_dataloader = DataLoader(valid_data, batch_size=args.batch_size, num_workers=4)#, sampler=valid_Sampler)
     elif args.training_strategy=="all_tiles":
         train_dataloader = DataLoader(train_data, batch_size=1, num_workers=9, shuffle=True)
         valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=True)
@@ -266,7 +284,9 @@ for splt in splits:
         model = MaxMIL(test_file_list[0].shape[1], lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, class_weights=torch.Tensor([pos_weight]))
     elif args.model=="AttentionResNet":
         model = AttentionResNet(test_file_list[0].shape[1], lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, attention_dim=args.attention_dim, class_weights=torch.Tensor([pos_weight]))
-
+    elif args.model=="TransformerMIL":
+        assert args.n_heads is not None
+        model = TransformerMIL(test_file_list[0].shape[1], lr=args.lr, weight_decay=args.weight_decay, hidden_dim=args.hidden_dim, n_heads=args.n_heads, class_weights=torch.Tensor([pos_weight]))
     checkpoint_error = ModelCheckpoint(save_top_k=1, 
                                           monitor="valid_error",
                                           mode="min",
@@ -285,7 +305,10 @@ for splt in splits:
                                           save_last=True,
                                           filename='best_loss_{epoch}-{valid_loss:.2f}')
 
-    trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1]) # limit_train_batches=100,
+    if args.training_strategy=="all_tiles":
+        trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1], accumulate_grad_batches=args.batch_size) # limit_train_batches=100,
+    else: 
+        trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1]) # limit_train_batches=100,
     trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
     print(checkpoint_f1.best_model_path)

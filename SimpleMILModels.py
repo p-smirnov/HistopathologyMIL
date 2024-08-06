@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import lightning as L
 from torch import optim, utils, Tensor
+from transformer.model.transformer import Transformer
 
 class MaxMIL(L.LightningModule):
     def __init__(self, input_size, hidden_dim,  lr=0.0001, weight_decay=50e-4, class_weights=Tensor([1.0])):
@@ -498,3 +499,118 @@ class AttentionCNVSig(L.LightningModule):
         return optimizer
 
 
+
+class TransformerMIL(L.LightningModule):
+    def __init__(self, input_size, hidden_dim, n_heads, lr=0.0001, weight_decay=50e-4, class_weights=Tensor([1.0])):
+        super().__init__()
+        assert all([x==hidden_dim[0] for x in hidden_dim])
+        self.input_size = input_size
+        self.embedding_dim = hidden_dim[0]
+        self.n_layers = len(hidden_dim)
+        self.n_heads = n_heads
+        self.lr = lr
+        self.weight_decay = weight_decay
+        self.class_weights = class_weights
+        self.loss = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
+        
+        self.transformer_config = {
+            "n_trans_blocks": self.n_layers,
+            "input_size": self.input_size,
+            "tb": {
+                "n_heads": self.n_heads,
+                "embedding_size": self.embedding_dim,
+                "mlp_dropout": 0.2,
+                "mlp_bias": True,
+                "mha_dropout": 0.2,
+                "mha_bias": False
+            },
+            "cls": True
+        }
+        
+        self.save_hyperparameters()
+        self.model = Transformer(False, self.transformer_config)
+
+
+    def forward(self, x):
+        Y_prob = self.model(x, None).squeeze()
+
+        Y_hat = torch.ge(torch.sigmoid(Y_prob), 0.5).float()
+
+        return Y_prob, Y_hat
+    ## TODO: implement attn rollout    
+    # def attention_forward(self, x):
+    #     A = self.attention(x)  # NxK
+    #     A = torch.transpose(A, 2, 1)  # KxN
+    #     A = F.softmax(A, dim=2)  # softmax over N
+    #     return A
+
+    def training_step(self, batch, batch_idx):
+        # training_step defines the train loop.
+        # it is independent of forward
+        x, y = batch
+        y = y.float()
+        y_prob, y_hat = self.forward(x)
+        # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
+        loss = self.loss(y_prob,y)
+        # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
+        error = 1. - y_hat.eq(y).float().mean()
+        #loss = self.calculate_objective(x, y)
+        # x = x.view(x.size(0), -1)
+        # z = self.encoder(x)
+        # x_hat = self.decoder(z)
+        # loss = nn.functional.mse_loss(x_hat, x)
+        # Logging to TensorBoard (if installed) by default
+        # loss = loss.mean()
+        self.log("train_loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log('train_error', error, prog_bar=True, on_step=False, on_epoch=True)
+        precision = torch.sum(y_hat * y) / (torch.sum(y_hat)+1e-8)
+        recall = torch.sum(y_hat * y) / (torch.sum(y)+1e-8)
+        if precision.isfinite().item(): 
+            self.log('train_prec', precision, prog_bar=True)
+        if recall.isfinite().item():
+            self.log('train_recall', recall, prog_bar=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y = y.float()
+        y_prob, y_hat = self.forward(x)
+        # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
+        loss = self.loss(y_prob,y)
+        # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
+        error = 1. - y_hat.eq(y).float().mean()
+        precision = torch.sum(y_hat * y) / (torch.sum(y_hat)+1e-8)
+        recall = torch.sum(y_hat * y) / (torch.sum(y)+1e-8)
+        # loss = loss.mean()
+        self.log("valid_loss", loss, prog_bar=True)
+        self.log('valid_error', error, prog_bar=True)
+        if precision.isfinite().item(): 
+            self.log('valid_prec', precision, prog_bar=True)
+        if recall.isfinite().item():
+            self.log('valid_recall', recall, prog_bar=True)
+        if recall.isfinite().item() and precision.isfinite().item():
+            f1score = 2 * precision * recall / (precision + recall + 1e-8)
+            self.log('valid_f1', f1score, prog_bar=True)
+
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        y = y.float()
+        y_prob, y_hat = self.forward(x)
+        # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
+        loss = self.loss(y_prob,y)
+        # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
+        error = 1. - y_hat.eq(y).float().mean()
+        precision = torch.sum(y_hat * y) / (torch.sum(y_hat)+1e-8)
+        recall = torch.sum(y_hat * y) / (torch.sum(y)+1e-8)
+        # loss = loss.mean()
+        self.log("test_loss", loss, prog_bar=True)
+        self.log('test_error', error, prog_bar=True)
+        if precision.isfinite().item(): 
+            self.log('test_prec', precision, prog_bar=True)
+        if recall.isfinite().item():
+            self.log('test_recall', recall, prog_bar=True)
+    
+    def configure_optimizers(self):
+        optimizer = optim.AdamW(self.parameters(), lr=self.lr, betas=(0.9, 0.999), weight_decay=self.weight_decay)
+        return optimizer
