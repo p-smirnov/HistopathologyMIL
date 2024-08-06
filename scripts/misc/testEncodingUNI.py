@@ -17,6 +17,7 @@ parser.add_argument('--tile_size', type=int, default=384, help='Tile size')
 parser.add_argument('--slide_names', type=str, default=['0A2F095A-1117-4F72-B648-717BAA3FD4AE'], help='Slide name', nargs="+")
 parser.add_argument('--output_path', type=str, default='/home/p163v/histopathology/UKHD_Neuro/UNI_embeddings/', help='Output path')
 parser.add_argument('--batch_size', type=int, default=512, help='Batch size')
+parser.add_argument('--dataset', type=str, default="UKHD_NP_HE", help='Batch size')
 args = parser.parse_args()
 
 
@@ -61,8 +62,11 @@ model.eval()
 
 for slide_name in args.slide_names:
     print(f'Processing slide {slide_name}')
+    if not os.path.exists('/home/p163v/histopathology/tiles/'+ str(args.tile_size) +'/'+ args.dataset +'/'+slide_name+'/' + slide_name + '_tiles_list_png.txt'):
+        print(f'No tiles found for slide {slide_name}')
+        continue
 
-    dataset = TileDataset('/home/p163v/histopathology/tiles/'+ str(args.tile_size) +'/UKHD_NP_HE/'+slide_name+'/', transform=transform)
+    dataset = TileDataset('/home/p163v/histopathology/tiles/'+ str(args.tile_size) +'/'+ args.dataset +'/'+slide_name+'/', transform=transform)
     inference_dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True) # good for a 24GB GPU, but too big for 20GB
 
 

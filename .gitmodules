@@ -1,0 +1,3 @@
+[submodule "src/transformer_from_scratch"]
+	path = src/transformer_from_scratch
+	url = https://github.com/p-smirnov/simple_transformer.git
