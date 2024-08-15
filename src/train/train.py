@@ -30,10 +30,6 @@ from src.utils.eval_utils import compute_confusion_matrix
 from argparse import ArgumentParser
 
 
-import os
-
-
-
 def main(args):
 
     ## Create a group tag for saving the models from the CV folds into wandb 
@@ -83,9 +79,9 @@ def main(args):
         print("Using metadata column: ", args.metadata_column)
         extra_features = F.one_hot(torch.LongTensor(slide_annots.loc[:,args.metadata_column].factorize()[0]))
         extra_features = extra_features.numpy().astype(np.float16)
-        all_features = load_features(args.embedding, extra_features)
+        all_features = load_features(args.embedding, args.patch_size, slide_annots, extra_features)
     else:
-        all_features = load_features(args.embedding)
+        all_features = load_features(args.embedding, args.patch_size, slide_annots)
 
     # Sanity check
     print(len(all_features))
