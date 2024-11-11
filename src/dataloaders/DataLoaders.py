@@ -20,6 +20,7 @@ from PIL import Image
 # from turbojpeg import TurboJPEG
 import pickle
 import zarr
+from src.utils.embedding_loaders import check_slide_exists, load_single_features
 
 
 class RetCCLFeatureLoader(Dataset):
@@ -53,22 +54,28 @@ class RetCCLFeatureLoaderMem(Dataset):
         self.labels = labels
         self.slide_list = slide_list
         self.num_patches = patches_per_iter
-
     def __len__(self):
         return len(self.labels)
-
     def __getitem__(self, idx):
         features = self.slide_list[idx]
         label = self.labels[idx]
         # features = features.reshape([1,-1,2048])
         if self.num_patches == 'all':
             features = features[:]
+            mask = np.zeros([features.shape[0]])
         else:
-            sampled_pchs = np.random.choice(range(features.shape[0]),size=self.num_patches, replace=False)
-            features = features[sampled_pchs,:]
+            if self.num_patches > features.shape[0]:
+                features = features[:]
+                mask = np.concatenate([np.zeros([features.shape[0]]),np.ones([self.num_patches - features.shape[0]])*(-np.inf)], axis=0)
+                features = np.pad(features, [(0,self.num_patches - features.shape[0]),(0,0)], mode='constant', constant_values=0)
+            else:
+                sampled_pchs = np.random.choice(range(features.shape[0]),size=self.num_patches, replace=False)
+                features = features[sampled_pchs,:]
+                mask = np.zeros([features.shape[0]])
         #if not torch.cuda.is_available():
         features = features.astype(np.float32)
-        return features, label
+        mask = mask.astype(np.float32)
+        return features, label, mask
 
 
 class RetCCLFeatureLoaderMemAllPatches(Dataset):
@@ -159,3 +166,25 @@ class HIPT256FeatureLoader(Dataset):
         cur_patches = cur_slide[sampled_pchs]
         # cur_patches = torch.stack([self.transform(Image.open(patches[x])) for x in sampled_pchs])
         return cur_patches, label
+
+
+class FromDiskFeatureLoader(Dataset):
+    def __init__(self, embedding, slidelist, patch_size, patches_per_iter = 'all', extra_features = None):
+        self.embedding = embedding
+        self.patch_size = patch_size
+        self.extra_features = None
+        self.extra_features = extra_features
+        self.slides = [slide for slide in slidelist if check_slide_exists(embedding, patch_size, slide)]
+        self.num_patches = patches_per_iter
+        self.feature_size = load_single_features(self.embedding, self.patch_size, self.slides[0]).shape[1]
+    def __len__(self):
+        return len(self.slides)
+    def __getitem__(self, idx):
+        cur_features = load_single_features(self.embedding, self.patch_size, self.slides[idx])
+        if self.num_patches == 'all':
+            return cur_features
+        sampled_pchs = np.random.choice(range(cur_features.shape[0]),size=self.num_patches, replace=False)
+        cur_patches = cur_features[sampled_pchs]
+        # cur_patches = torch.stack([self.transform(Image.open(patches[x])) for x in sampled_pchs])
+        return cur_patches
+

@@ -4,6 +4,8 @@
 import numpy as np
 import pandas as pd
 import os
+
+
 import h5py
 import wandb
 import zarr
@@ -107,9 +109,9 @@ def main(args):
         test_set = pd.read_csv(split_path + "test_set.csv")
 
 
-        train_slide = train_set.loc[train_set["patches"]>=args.patches_per_pat].slide.tolist()
-        valid_slide = valid_set.loc[valid_set["patches"]>=args.patches_per_pat].slide.tolist()
-        test_slide = test_set.loc[test_set["patches"]>=args.patches_per_pat].slide.tolist()
+        train_slide = train_set.loc[train_set["patches"]>=args.min_patches_per_pat].slide.tolist()
+        valid_slide = valid_set.loc[valid_set["patches"]>=args.min_patches_per_pat].slide.tolist()
+        test_slide = test_set.loc[test_set["patches"]>=args.min_patches_per_pat].slide.tolist()
 
         train_files = [x for x in train_slide] # here in case file path needs to be added later
         valid_files = [x for x in valid_slide]
@@ -191,142 +193,142 @@ def main(args):
 
         ## If we go 1 patient at a time, we gradient accumulate 
         if args.training_strategy=="all_tiles":
-            trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1], accumulate_grad_batches=args.batch_size) # limit_train_batches=100,
+            trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1], accumulate_grad_batches=args.batch_size, gradient_clip_val = args.clip_grad) # limit_train_batches=100,
         else: 
-            trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1]) # limit_train_batches=100,
+            trainer = L.Trainer(max_epochs=args.max_epochs, log_every_n_steps=1, logger=wandb_logger, callbacks=[checkpoint_error,checkpoint_loss, checkpoint_f1], gradient_clip_val = args.clip_grad) # limit_train_batches=100,
         trainer.fit(model, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader)
 
         # print(checkpoint_f1.best_model_path)
 
-        ########
-        ## Now, we run and save the predictions for the best error model
-        ########
-        model = model.load_from_checkpoint(checkpoint_error.best_model_path)
-        model.eval()
+        # ########
+        # ## Now, we run and save the predictions for the best error model
+        # ########
+        # model = model.load_from_checkpoint(checkpoint_error.best_model_path)
+        # model.eval()
 
-        train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
-        train_dataloader = DataLoader(train_data, batch_size=1, num_workers=4, shuffle=False)
+        # train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
+        # train_dataloader = DataLoader(train_data, batch_size=1, num_workers=4, shuffle=False)
 
-        valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
-        valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=False)
+        # valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
+        # valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=False)
 
-        test_dataloader = DataLoader(test_data, batch_size=1, num_workers=4, shuffle=False)
+        # test_dataloader = DataLoader(test_data, batch_size=1, num_workers=4, shuffle=False)
 
-        train_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(train_dataloader)]
-        train_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(train_dataloader)]   
-        train_confusion = compute_confusion_matrix(train_labels.astype(int), np.array(train_preds).astype(int))
-
-
-        valid_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(valid_dataloader)]
-        valid_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(valid_dataloader)]
-        valid_confusion = compute_confusion_matrix(valid_labels.astype(int), np.array(valid_preds).astype(int))
+        # train_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(train_dataloader)]
+        # train_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(train_dataloader)]   
+        # train_confusion = compute_confusion_matrix(train_labels.astype(int), np.array(train_preds).astype(int))
 
 
-        test_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(test_dataloader)]
-        test_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(test_dataloader)]
-        test_confusion = compute_confusion_matrix(test_labels.astype(int), np.array(test_preds).astype(int))
-
-        pred_artifact = wandb.Artifact("preds_error", type="predictions_error")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_preds)), "training")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_preds)), "validation")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_preds)), "testing")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_probs)), "training_probs")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_probs)), "validation_probs")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_probs)), "testing_probs")
-        wandb_logger.experiment.log_artifact(pred_artifact)
-
-        conf_artifact = wandb.Artifact("confusion_error", type="predictions_error")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_confusion)), "training")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_confusion)), "validation")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_confusion)), "testing")
-        wandb_logger.experiment.log_artifact(conf_artifact)
-
-        ########
-        ## Now, we run and save the predictions for the best f1 score model
-        ########
-
-        model = model.load_from_checkpoint(checkpoint_f1.best_model_path)
-        model.eval()
-
-        train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
-        train_dataloader = DataLoader(train_data, batch_size=1, num_workers=4, shuffle=False)
-
-        valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
-        valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=False)
-
-        test_dataloader = DataLoader(test_data, batch_size=1, num_workers=4, shuffle=False)
+        # valid_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(valid_dataloader)]
+        # valid_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(valid_dataloader)]
+        # valid_confusion = compute_confusion_matrix(valid_labels.astype(int), np.array(valid_preds).astype(int))
 
 
-        train_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(train_dataloader)]
-        train_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(train_dataloader)]   
-        train_confusion = compute_confusion_matrix(train_labels.astype(int), np.array(train_preds).astype(int))
+        # test_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(test_dataloader)]
+        # test_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(test_dataloader)]
+        # test_confusion = compute_confusion_matrix(test_labels.astype(int), np.array(test_preds).astype(int))
 
-        valid_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(valid_dataloader)]
-        valid_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(valid_dataloader)]
-        valid_confusion = compute_confusion_matrix(valid_labels.astype(int), np.array(valid_preds).astype(int))
+        # pred_artifact = wandb.Artifact("preds_error", type="predictions_error")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_preds)), "training")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_preds)), "validation")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_preds)), "testing")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_probs)), "training_probs")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_probs)), "validation_probs")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_probs)), "testing_probs")
+        # wandb_logger.experiment.log_artifact(pred_artifact)
 
-        test_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(test_dataloader)]
-        test_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(test_dataloader)]
-        test_confusion = compute_confusion_matrix(test_labels.astype(int), np.array(test_preds).astype(int))
+        # conf_artifact = wandb.Artifact("confusion_error", type="predictions_error")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_confusion)), "training")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_confusion)), "validation")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_confusion)), "testing")
+        # wandb_logger.experiment.log_artifact(conf_artifact)
 
-        pred_artifact = wandb.Artifact("preds_f1", type="predictions_f1")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_preds)), "training")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_preds)), "validation")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_preds)), "testing")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_probs)), "training_probs")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_probs)), "validation_probs")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_probs)), "testing_probs")
-        wandb_logger.experiment.log_artifact(pred_artifact)
+        # ########
+        # ## Now, we run and save the predictions for the best f1 score model
+        # ########
 
-        conf_artifact = wandb.Artifact("confusion_f1", type="predictions_f1")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_confusion)), "training")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_confusion)), "validation")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_confusion)), "testing")
-        wandb_logger.experiment.log_artifact(conf_artifact)
+        # model = model.load_from_checkpoint(checkpoint_f1.best_model_path)
+        # model.eval()
 
+        # train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
+        # train_dataloader = DataLoader(train_data, batch_size=1, num_workers=4, shuffle=False)
 
-        ########
-        ## Now, we run and save the predictions for the best loss model
-        ########
+        # valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
+        # valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=False)
 
-        model = model.load_from_checkpoint(checkpoint_loss.best_model_path)
-        model.eval()
-
-        train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
-        train_dataloader = DataLoader(train_data, batch_size=1, num_workers=4, shuffle=False)
-
-        valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
-        valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=False)
-
-        test_dataloader = DataLoader(test_data, batch_size=1, num_workers=4, shuffle=False)
-
-        train_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(train_dataloader)]
-        train_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(train_dataloader)]   
-        train_confusion = compute_confusion_matrix(train_labels.astype(int), np.array(train_preds).astype(int))
-
-        valid_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(valid_dataloader)]
-        valid_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(valid_dataloader)]
-        valid_confusion = compute_confusion_matrix(valid_labels.astype(int), np.array(valid_preds).astype(int))
+        # test_dataloader = DataLoader(test_data, batch_size=1, num_workers=4, shuffle=False)
 
 
-        test_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(test_dataloader)]
-        test_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(test_dataloader)]
-        test_confusion = compute_confusion_matrix(test_labels.astype(int), np.array(test_preds).astype(int))
+        # train_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(train_dataloader)]
+        # train_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(train_dataloader)]   
+        # train_confusion = compute_confusion_matrix(train_labels.astype(int), np.array(train_preds).astype(int))
 
-        pred_artifact = wandb.Artifact("preds_loss", type="predictions_loss")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_preds)), "training")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_preds)), "validation")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_preds)), "testing")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_probs)), "training_probs")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_probs)), "validation_probs")
-        pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_probs)), "testing_probs")
-        wandb_logger.experiment.log_artifact(pred_artifact)
+        # valid_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(valid_dataloader)]
+        # valid_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(valid_dataloader)]
+        # valid_confusion = compute_confusion_matrix(valid_labels.astype(int), np.array(valid_preds).astype(int))
 
-        conf_artifact = wandb.Artifact("confusion_loss", type="predictions_loss")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_confusion)), "training")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_confusion)), "validation")
-        conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_confusion)), "testing")
-        wandb_logger.experiment.log_artifact(conf_artifact)
+        # test_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(test_dataloader)]
+        # test_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(test_dataloader)]
+        # test_confusion = compute_confusion_matrix(test_labels.astype(int), np.array(test_preds).astype(int))
+
+        # pred_artifact = wandb.Artifact("preds_f1", type="predictions_f1")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_preds)), "training")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_preds)), "validation")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_preds)), "testing")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_probs)), "training_probs")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_probs)), "validation_probs")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_probs)), "testing_probs")
+        # wandb_logger.experiment.log_artifact(pred_artifact)
+
+        # conf_artifact = wandb.Artifact("confusion_f1", type="predictions_f1")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_confusion)), "training")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_confusion)), "validation")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_confusion)), "testing")
+        # wandb_logger.experiment.log_artifact(conf_artifact)
+
+
+        # ########
+        # ## Now, we run and save the predictions for the best loss model
+        # ########
+
+        # model = model.load_from_checkpoint(checkpoint_loss.best_model_path)
+        # model.eval()
+
+        # train_data = RetCCLFeatureLoaderMem(train_file_list,train_labels, patches_per_iter='all')
+        # train_dataloader = DataLoader(train_data, batch_size=1, num_workers=4, shuffle=False)
+
+        # valid_data = RetCCLFeatureLoaderMem(valid_file_list,valid_labels, patches_per_iter='all')
+        # valid_dataloader = DataLoader(valid_data, batch_size=1, num_workers=4, shuffle=False)
+
+        # test_dataloader = DataLoader(test_data, batch_size=1, num_workers=4, shuffle=False)
+
+        # train_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(train_dataloader)]
+        # train_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(train_dataloader)]   
+        # train_confusion = compute_confusion_matrix(train_labels.astype(int), np.array(train_preds).astype(int))
+
+        # valid_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(valid_dataloader)]
+        # valid_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(valid_dataloader)]
+        # valid_confusion = compute_confusion_matrix(valid_labels.astype(int), np.array(valid_preds).astype(int))
+
+
+        # test_preds = [model(torch.tensor(x).to(model.device))[1].detach().item() for x,y in iter(test_dataloader)]
+        # test_probs = [model(torch.tensor(x).to(model.device))[0].detach().item() for x,y in iter(test_dataloader)]
+        # test_confusion = compute_confusion_matrix(test_labels.astype(int), np.array(test_preds).astype(int))
+
+        # pred_artifact = wandb.Artifact("preds_loss", type="predictions_loss")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_preds)), "training")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_preds)), "validation")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_preds)), "testing")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_probs)), "training_probs")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_probs)), "validation_probs")
+        # pred_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_probs)), "testing_probs")
+        # wandb_logger.experiment.log_artifact(pred_artifact)
+
+        # conf_artifact = wandb.Artifact("confusion_loss", type="predictions_loss")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(train_confusion)), "training")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(valid_confusion)), "validation")
+        # conf_artifact.add(wandb.Table(dataframe=pd.DataFrame(test_confusion)), "testing")
+        # wandb_logger.experiment.log_artifact(conf_artifact)
         
         ## Finish this run so we can record the next fold at the top of the loop
         wandb.finish()
@@ -338,17 +340,19 @@ if __name__ == '__main__':
 
     parser.add_argument("--model", type=str, default="Attention")
 
-
-    # Trainer arguments
+    # Hyperparameters for the model
     parser.add_argument("--hidden_dim", type=int, default=[512], nargs="+")
     parser.add_argument("--attention_dim", type=int, default=[256], nargs="+")
 
-    # Hyperparameters for the model
+    # Trainer arguments
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--weight_decay", type=float, default=10e-4)
     parser.add_argument("--max_epochs", type=int, default=100)
+
+    # Dataset arguments
     parser.add_argument("--patch_size", type=int, default=299)
     parser.add_argument("--patches_per_pat", type=int, default=10)
+    parser.add_argument("--min_patches_per_pat", type=int, default=100)
     parser.add_argument("--training_strategy", type=str, default='random_tiles')
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--cv_split_path", type=str, default='/home/p163v/histopathology/splits/02022024/')
@@ -357,7 +361,11 @@ if __name__ == '__main__':
     parser.add_argument("--tissue_filter", type=str, default=None, nargs="+")
     parser.add_argument("--label_path", type=str, default="/home/p163v/histopathology/metadata/CT_3_Class_Draft.csv")
     parser.add_argument("--slide_annot_path", type=str, default="/home/p163v/histopathology/metadata/labels_with_new_batch.csv")
+    
+    # Transformer Specific Arguments
     parser.add_argument("--n_heads", type=int, default=None)
+    parser.add_argument("--clip_grad", type=float, default=0.0)
+    # parser.add_argument("--swa", action='store_true')
 
     # parser.add_argument("--oncotree_filter", type=str, default=None, nargs="+")
     # parser.add_argument("--classifier_confidence", type=int, default=80)
@@ -367,6 +375,7 @@ if __name__ == '__main__':
 
     if args.training_strategy=="all_tiles":
         args.patches_per_pat = int(10)
+        args.min_patches_per_pat = int(10)
 
     ## Needed on some servers at DKFZ 
     os.environ['HTTP_PROXY']="http://www-int.dkfz-heidelberg.de:80"

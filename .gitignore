@@ -26,3 +26,5 @@ UKHD_Neuro
 metadata/*
 scripts/tiling_new
 spatial_medullo
+MASTERFF
+*.npy

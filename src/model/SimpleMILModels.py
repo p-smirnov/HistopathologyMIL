@@ -158,15 +158,17 @@ class Attention(L.LightningModule):
             # nn.Sigmoid()
         )
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         # x = x.squeeze(0)
-
+        mask = kwargs.get('mask', None)
         # H = self.feature_extractor_part1(x)
         H = self.feature_extractor_part2(x)  # NxL
 
-        A = self.attention(x)  # NxK
-        A = torch.transpose(A, 2, 1)  # KxN
-        A = F.softmax(A, dim=2)  # softmax over N
+
+        # A = self.attention(x)  # NxK
+        # A = torch.transpose(A, 2, 1)  # KxN
+        # A = F.softmax(A, dim=2)  # softmax over N
+        A = self.attention_forward(x, mask)
 
         M = torch.matmul(A, H)  # KxL
         M = torch.squeeze(M, 1)
@@ -175,18 +177,25 @@ class Attention(L.LightningModule):
 
         return Y_prob, Y_hat, A
     
-    def attention_forward(self, x):
+    def attention_forward(self, x, mask = None):
+        if mask is None:
+            mask = torch.zeros(x.shape[0], x.shape[1]).to(x.device)
         A = self.attention(x)  # NxK
+        A = A + mask.unsqueeze(2)
         A = torch.transpose(A, 2, 1)  # KxN
         A = F.softmax(A, dim=2)  # softmax over N
         return A
 
+    def score_forward(self, x):
+        H = self.feature_extractor_part2(x)  # NxL
+        return self.classifier(H)
+
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward
-        x, y = batch
+        x, y, mask = batch
         y = y.float()
-        y_prob, y_hat, _ = self.forward(x)
+        y_prob, y_hat, _ = self.forward(x, mask=mask)
         # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
         loss = self.loss(y_prob,y)
         # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
@@ -209,9 +218,9 @@ class Attention(L.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        x, y = batch
+        x, y, mask = batch
         y = y.float()
-        y_prob, y_hat, _ = self.forward(x)
+        y_prob, y_hat, _ = self.forward(x, mask=mask)
         # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
         loss = self.loss(y_prob,y)
         # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
@@ -231,9 +240,9 @@ class Attention(L.LightningModule):
 
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
+        x, y, mask = batch
         y = y.float()
-        y_prob, y_hat, _ = self.forward(x)
+        y_prob, y_hat, _ = self.forward(x, mask=mask)
         # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
         loss = self.loss(y_prob,y)
         # loss = -1. * (y * torch.log(y_prob) + (1. - y) * torch.log(1. - y_prob))  # negative log bernoulli
@@ -501,7 +510,7 @@ class AttentionCNVSig(L.LightningModule):
 
 
 class TransformerMIL(L.LightningModule):
-    def __init__(self, input_size, hidden_dim, n_heads, lr=0.0001, weight_decay=50e-4, class_weights=Tensor([1.0])):
+    def __init__(self, input_size, hidden_dim, n_heads, lr=0.0001, weight_decay=50e-4, class_weights=Tensor([1.0]), position_encoding=None):
         super().__init__()
         assert all([x==hidden_dim[0] for x in hidden_dim])
         self.input_size = input_size
@@ -512,7 +521,9 @@ class TransformerMIL(L.LightningModule):
         self.weight_decay = weight_decay
         self.class_weights = class_weights
         self.loss = nn.BCEWithLogitsLoss(pos_weight=self.class_weights)
-        
+        self.position_encoding = position_encoding ## passed in as a parameter
+
+
         self.transformer_config = {
             "n_trans_blocks": self.n_layers,
             "input_size": self.input_size,
@@ -531,7 +542,8 @@ class TransformerMIL(L.LightningModule):
         self.model = Transformer(False, self.transformer_config)
 
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
+        mask = kwargs.get('mask', None)
         Y_prob = self.model(x, None).squeeze()
 
         Y_hat = torch.ge(torch.sigmoid(Y_prob), 0.5).float()
@@ -547,7 +559,7 @@ class TransformerMIL(L.LightningModule):
     def training_step(self, batch, batch_idx):
         # training_step defines the train loop.
         # it is independent of forward
-        x, y = batch
+        x, y, mask = batch
         y = y.float()
         y_prob, y_hat = self.forward(x)
         # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
@@ -572,7 +584,7 @@ class TransformerMIL(L.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        x, y = batch
+        x, y, mask = batch
         y = y.float()
         y_prob, y_hat = self.forward(x)
         # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
@@ -594,7 +606,7 @@ class TransformerMIL(L.LightningModule):
 
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
+        x, y, mask = batch
         y = y.float()
         y_prob, y_hat = self.forward(x)
         # y_prob = torch.clamp(y_prob, min=1e-5, max=1. - 1e-5)
