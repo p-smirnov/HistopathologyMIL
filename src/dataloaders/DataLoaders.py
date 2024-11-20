@@ -1,24 +1,20 @@
-import numpy as np
-import pandas as pd
+import pickle
+import glob 
 import os
 import sys
-import h5py
-import re
-import sklearn
 
+
+import h5py
+
+import numpy as np
+import pandas as pd
 
 import torch 
-from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import ToTensor, Compose, Normalize
+from torch.utils.data import Dataset
+from torchvision.transforms import Normalize
 import torchvision
-import torch.nn as nn
-import torch.nn.functional as F
-import lightning as L
-from torch import optim, utils, Tensor
-import glob 
-from PIL import Image
+# from PIL import Image
 # from turbojpeg import TurboJPEG
-import pickle
 import zarr
 from src.utils.embedding_loaders import check_slide_exists, load_single_features
 
@@ -76,6 +72,35 @@ class RetCCLFeatureLoaderMem(Dataset):
         features = features.astype(np.float32)
         mask = mask.astype(np.float32)
         return features, label, mask
+
+
+
+class RetCCLFeatureLoaderContiguousPatches(Dataset):
+    def __init__(self, slide_list, labels, square_size = 4):
+        assert len(labels) == len(slide_list)
+        self.labels = labels
+        self.slide_list = [x[0] for x in slide_list]
+        self.coord_list = [x[1] for x in slide_list]
+        self.square_size = square_size
+    def __len__(self):
+        return len(self.labels)
+    def __getitem__(self, idx):
+        features = self.slide_list[idx]
+        label = self.labels[idx]
+        coords = self.coord_list[idx]
+        locations = [None]
+        while len([x for x in locations if x is not None]) < 2: ## want at least more than 1 relevant patch
+            sample_patch = np.random.choice(range(features.shape[0]),size=1, replace=False)
+            locations = coords.get_square(coords.pos_x[sample_patch][0], coords.pos_y[sample_patch][0], n_steps = self.square_size)
+        indicies = [coords.get_index(x[0], x[1]) if x is not None else None for x in locations] # x will be a tuple if its not None
+
+        features = np.stack([features[i] if i is not None else np.zeros_like(features[0]) for i in indicies])
+        mask = np.concatenate([np.zeros([1]) if i is not None else np.ones([1])*(-np.inf) for i in indicies], axis=0)
+        out_coords = [(x,y) for x in range(self.square_size) for y in range(self.square_size)]
+        features = features.astype(np.float32)
+        mask = mask.astype(np.float32)
+        return features, label, mask, out_coords
+
 
 
 class RetCCLFeatureLoaderMemAllPatches(Dataset):
