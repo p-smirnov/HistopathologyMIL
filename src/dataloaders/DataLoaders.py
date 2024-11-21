@@ -96,7 +96,7 @@ class RetCCLFeatureLoaderContiguousPatches(Dataset):
 
         features = np.stack([features[i] if i is not None else np.zeros_like(features[0]) for i in indicies])
         mask = np.concatenate([np.zeros([1]) if i is not None else np.ones([1])*(-np.inf) for i in indicies], axis=0)
-        out_coords = [(x,y) for x in range(self.square_size) for y in range(self.square_size)]
+        out_coords = np.array([[x,y] for x in range(self.square_size) for y in range(self.square_size)])
         features = features.astype(np.float32)
         mask = mask.astype(np.float32)
         return features, label, mask, out_coords
