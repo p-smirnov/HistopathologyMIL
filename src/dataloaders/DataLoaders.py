@@ -76,12 +76,13 @@ class RetCCLFeatureLoaderMem(Dataset):
 
 
 class RetCCLFeatureLoaderContiguousPatches(Dataset):
-    def __init__(self, slide_list, labels, square_size = 4):
+    def __init__(self, slide_list, labels, square_size = 4, return_coords = True):
         assert len(labels) == len(slide_list)
         self.labels = labels
         self.slide_list = [x[0] for x in slide_list]
         self.coord_list = [x[1] for x in slide_list]
         self.square_size = square_size
+        self.return_coords = return_coords
     def __len__(self):
         return len(self.labels)
     def __getitem__(self, idx):
@@ -99,6 +100,8 @@ class RetCCLFeatureLoaderContiguousPatches(Dataset):
         out_coords = np.array([[x,y] for x in range(self.square_size) for y in range(self.square_size)])
         features = features.astype(np.float32)
         mask = mask.astype(np.float32)
+        if not self.return_coords:
+            return features, label, mask
         return features, label, mask, out_coords
 
 
